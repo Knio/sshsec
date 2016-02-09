@@ -161,7 +161,8 @@ def scan(addr):
                         random.getrandbits(gex.p.bit_length()-1)).pack())
 
                 gex_reply = s.next()
-                r['host_keys'][host_key_alg] = read_host_key(gex_reply.host_key)
+                alg, key = read_host_key(gex_reply.host_key)
+                r['host_keys'][alg] = key
 
             except EOFError:
                 r['gex']['%d' % gex_size] = 'EOF'
@@ -184,7 +185,8 @@ def scan(addr):
             reply = ssh.SSHKexDhGexReply()
             for k, v in ssh.SSHKexDhGexReply.properties:
                 setattr(reply, k, v.load(io))
-            r['host_keys'][host_key_alg] = read_host_key(reply.host_key)
+            alg, key = read_host_key(reply.host_key)
+            r['host_keys'][alg] = key
 
         packet = s.next()
         if isinstance(packet, ssh.SSHNewKeys):
