@@ -16,4 +16,4 @@ if __name__ == '__main__':
 
     result = scanner.scan((args[0], options.port))
 
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2, sort_keys=True))

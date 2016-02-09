@@ -1,7 +1,11 @@
 #!/usr/bin/python3
 
 # http://www.openssh.com/specs.html
+
+# SSH Transport Layer Protocol
 # http://www.openssh.com/txt/rfc4253.txt
+
+# Diffie-Hellman Group Exchange
 # https://www.ietf.org/rfc/rfc4419.txt
 
 import socket
@@ -9,7 +13,6 @@ import base64
 import copy
 import random
 from io import BytesIO
-
 
 from . import ssh
 
@@ -51,10 +54,10 @@ class SSHSocket(object):
     def read_line(self):
         # server will wait at newline
         r = b''
-        while b'\r\n' not in r:
+        while not r.endswith(b'\r\n'):
             if len(r) > 1024:
                 raise ValueError
-            s = self.socket.recv(1024)
+            s = self.read(1)
             if not s:
                 raise EOFError
             r += s
@@ -63,12 +66,16 @@ class SSHSocket(object):
     def next(self):
         return ssh.SSHPacket.load(self)
 
+
 def scan(addr):
     result = {}
 
     s = SSHSocket(addr)
     result['ip'] = s.socket.getpeername()[0]
-    result['ident'] = s.read_line().decode('ascii').strip()
+    ident = s.read_line().decode('ascii').strip()
+    if not ident.startswith('SSH-2.0-'):
+        raise ValueError('Not an SSH 2.0 server (server said: %r)' % ident)
+    result['ident'] = ident
     s.send_line('SSH-2.0-sshsec.zkpq.ca')
 
     kexinit = s.next()
@@ -85,42 +92,108 @@ def scan(addr):
         kexinit = s.next()
 
     def read_host_key(b):
-        return base64.b64encode(b).decode('ascii')
+        txt = base64.b64encode(b).decode('ascii')
 
         io = BytesIO(b)
         alg = ssh.SSHPropType.cl_string.load(io).decode('ascii')
         key = {}
         if alg == 'ssh-ed25519':
-            key['g'] = ssh.SSHPropType.cl_mpint.load(io)
+            key['n'] = ssh.SSHPropType.cl_mpint.load(io)
         elif alg == 'ecdsa-sha2-nistp256':
             key['name'] = ssh.SSHPropType.cl_string.load(io).decode('ascii')
-            key['g'] = ssh.SSHPropType.cl_mpint.load(io)
+            key['n'] = ssh.SSHPropType.cl_mpint.load(io)
         elif alg == 'ssh-rsa':
             key['e'] = ssh.SSHPropType.cl_mpint.load(io)
-            key['g'] = ssh.SSHPropType.cl_mpint.load(io)
+            key['n'] = ssh.SSHPropType.cl_mpint.load(io)
         elif alg == 'ssh-dss':
-            key['e'] = ssh.SSHPropType.cl_mpint.load(io)
+            key['p'] = ssh.SSHPropType.cl_mpint.load(io)
+            key['q'] = ssh.SSHPropType.cl_mpint.load(io)
             key['g'] = ssh.SSHPropType.cl_mpint.load(io)
-            key['r'] = ssh.SSHPropType.cl_mpint.load(io)
-            key['s'] = ssh.SSHPropType.cl_mpint.load(io)
+            key['y'] = ssh.SSHPropType.cl_mpint.load(io)
         else:
             raise ValueError(alg)
-        r = io.read()
-        assert not r, (alg, r)
-        return alg, key
+        s = io.read()
+        if s:
+            raise ValueError('extra data: %r' % s)
+        return alg, {'string': txt, 'values': key}
+
 
     result['host_keys'] = {}
     result['gex'] = {}
 
-    kex = [kex for kex in (
-            'diffie-hellman-group-exchange-sha256',
-            'diffie-hellman-group-exchange-sha1')
-        if kex in kexinit.kex_algorithms][0]
+    kex = 'diffie-hellman-group-exchange-sha256'
+    if kex not in kexinit.kex_algorithms:
+        kex = 'diffie-hellman-group-exchange-sha1'
+    if kex not in kexinit.kex_algorithms:
+        kex = 'diffie-hellman-group14-sha1'
+    if kex not in kexinit.kex_algorithms:
+        kex = 'diffie-hellman-group1-sha1'
+    if kex not in kexinit.kex_algorithms:
+        kex = kexinit.kex_algorithms[0]
 
     # TODO add 768: server should EOF if it's good
-    want_gex_size = [1024, 2048, 4096, 8192]
+    want_gex_size = [768]
+    if kex.startswith('diffie-hellman-group-exchange-'):
+        want_gex_size += [1024, 2048, 4096, 8192]
     want_keys = list(kexinit.server_host_key_algorithms)
 
+    def query(gex_size, host_key_alg):
+        r = {
+            'host_keys': {},
+            'gex': {},
+        }
+        ki = copy.deepcopy(kexinit)
+        ki.kex_algorithms = [kex]
+        ki.server_host_key_algorithms = [host_key_alg]
+
+        s.send(ki.pack())
+
+        if kex.startswith('diffie-hellman-group-exchange-'):
+            # GEX
+            s.send(ssh.SSHKexDhGexRequest(
+                    gex_size, gex_size, gex_size).pack())
+            # expecting GEX_GROUP
+            # server will EOF if it's too small
+            try:
+                gex = s.next()
+                r['gex']['%d' % gex_size] = gex.to_json()
+                s.send(ssh.SSHKexDhGexInit(
+                        random.getrandbits(gex.p.bit_length()-1)).pack())
+
+                gex_reply = s.next()
+                r['host_keys'][host_key_alg] = read_host_key(gex_reply.host_key)
+
+            except EOFError:
+                r['gex']['%d' % gex_size] = 'EOF'
+                return r
+
+        else:
+            if kex == 'diffie-hellman-group1-sha1':
+                s.send(ssh.SSHKexDhInit(random.getrandbits(1024)).pack())
+
+            elif kex == 'diffie-hellman-group14-sha1':
+                s.send(ssh.SSHKexDhInit(random.getrandbits(2048)).pack())
+
+            else:
+                raise Exception('unknown kex: %s' % kex)
+
+            msg_type, io = ssh.SSHPacket.load_raw(s)
+            if msg_type != ssh.SSHPacket.KEX_DH_REPLY:
+                raise ValueError('invalid packet: %d %r'
+                        % (msg_type, io.read()))
+            reply = ssh.SSHKexDhGexReply()
+            for k, v in ssh.SSHKexDhGexReply.properties:
+                setattr(reply, k, v.load(io))
+            r['host_keys'][host_key_alg] = read_host_key(reply.host_key)
+
+        packet = s.next()
+        if isinstance(packet, ssh.SSHNewKeys):
+            pass
+        else:
+            raise ValueError('invalid packet: %r %r'
+                    % (type(packet), packet.to_json()))
+
+        return r
 
     while want_keys or want_gex_size:
         if want_gex_size:
@@ -129,29 +202,17 @@ def scan(addr):
         if want_keys:
             host_key_alg = want_keys.pop()
 
-        ki = copy.deepcopy(kexinit)
-        ki.kex_algorithms = [kex]
-        ki.server_host_key_algorithms = [host_key_alg]
+        try:
+            r = query(gex_size, host_key_alg)
+            for k, v in r.items():
+                result[k].update(v)
+        except:
+            import traceback
+            traceback.print_exc()
+            pass
 
-        s.send(ki.pack())
-        s.send(ssh.SSHDhGexRequest(gex_size, gex_size, gex_size).pack())
-
-        gex = s.next()
-        result['gex']['%d' % gex_size] = gex.to_json()
-
-        s.send(ssh.SSHDhGexInit(random.getrandbits(gex.p.bit_length()-1))
-                .pack())
-
-        rep = s.next()
-        result['host_keys'][host_key_alg] = read_host_key(rep.host_key)
-
-        packet = s.next()
-        if isinstance(packet, ssh.SSHNewKeys):
+        if want_keys or want_gex_size:
             reopen()
-            continue
-
-        else:
-            raise Exception(packet)
 
     s.close()
     return result

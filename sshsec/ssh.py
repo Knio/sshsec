@@ -135,7 +135,7 @@ class SSHPacket(metaclass=SSHMeta):
             setattr(self, k, v(x))
 
     @staticmethod
-    def load(io, mac_length=0):
+    def load_raw(io, mac_length=0):
         H = SSHPacket.HEADER
         packet_length, padding_length = H.unpack(io.read(H.size))
         data    = io.read(packet_length - padding_length - 1)
@@ -144,9 +144,16 @@ class SSHPacket(metaclass=SSHMeta):
 
         io = BytesIO(data)
         msg_type = SSHProp.cl_byte.load(io)
+        return msg_type, io
+
+    @staticmethod
+    def load(io, mac_length=0):
+        msg_type, io = SSHPacket.load_raw(io, mac_length=mac_length)
         obj = SSHPacket.MSG_TYPES[msg_type]()
         for k, v in obj.properties:
             setattr(obj, k, v.load(io))
+        if io.read():
+            raise ValueError('packet was not fully read')
         return obj
 
     def pack(self, mac=b''):
@@ -195,12 +202,13 @@ class SSHPacket(metaclass=SSHMeta):
     CHANNEL_SUCCESS             = 99
     CHANNEL_FAILURE             = 100
 
-    KEX_DH_GEX_REQUEST_OLD = 30
+    KEX_DH_INIT = 30
+    KEX_DH_REPLY = 31
+
     KEX_DH_GEX_REQUEST     = 34
     KEX_DH_GEX_GROUP       = 31
     KEX_DH_GEX_INIT        = 32
     KEX_DH_GEX_REPLY       = 33
-
 
 
 class SSHDisconnect(SSHPacket):
@@ -225,18 +233,23 @@ class SSHKexInit(SSHPacket):
     first_kex_packet_follows                = SSHProp.byte
     reserved                                = SSHProp.uint32
 
-class SSHDhGexRequest(SSHPacket):
+class SSHKexDhInit(SSHPacket):
+    msg_type =  SSHPacket.KEX_DH_INIT
+    e = SSHProp.mpint
+
+class SSHKexDhGexRequest(SSHPacket):
     msg_type = SSHPacket.KEX_DH_GEX_REQUEST
     min = SSHProp.uint32
     n   = SSHProp.uint32
     max = SSHProp.uint32
 
-class SSHDhGexGroup(SSHPacket):
+class SSHKexDhGexGroup(SSHPacket):
     msg_type = SSHPacket.KEX_DH_GEX_GROUP
     p = SSHProp.mpint
     g = SSHProp.mpint
 
-class SSHDhGexInit(SSHPacket):
+# same as non-GEX packet
+class SSHKexDhGexInit(SSHPacket):
     msg_type = SSHPacket.KEX_DH_GEX_INIT
     e = SSHProp.mpint
 
