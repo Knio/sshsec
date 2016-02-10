@@ -91,33 +91,6 @@ def scan(addr):
         s.send_line('SSH-2.0-sshsec.zkpq.ca')
         kexinit = s.next()
 
-    def read_host_key(b):
-        txt = base64.b64encode(b).decode('ascii')
-
-        io = BytesIO(b)
-        alg = ssh.SSHPropType.cl_string.load(io).decode('ascii')
-        key = {}
-        if alg == 'ssh-ed25519':
-            key['n'] = ssh.SSHPropType.cl_mpint.load(io)
-        elif alg == 'ecdsa-sha2-nistp256':
-            key['name'] = ssh.SSHPropType.cl_string.load(io).decode('ascii')
-            key['n'] = ssh.SSHPropType.cl_mpint.load(io)
-        elif alg == 'ssh-rsa':
-            key['e'] = ssh.SSHPropType.cl_mpint.load(io)
-            key['n'] = ssh.SSHPropType.cl_mpint.load(io)
-        elif alg == 'ssh-dss':
-            key['p'] = ssh.SSHPropType.cl_mpint.load(io)
-            key['q'] = ssh.SSHPropType.cl_mpint.load(io)
-            key['g'] = ssh.SSHPropType.cl_mpint.load(io)
-            key['y'] = ssh.SSHPropType.cl_mpint.load(io)
-        else:
-            raise ValueError(alg)
-        s = io.read()
-        if s:
-            raise ValueError('extra data: %r' % s)
-        return alg, {'string': txt, 'values': key}
-
-
     result['host_keys'] = {}
     result['gex'] = {}
 
@@ -161,8 +134,8 @@ def scan(addr):
                         random.getrandbits(gex.p.bit_length()-1)).pack())
 
                 gex_reply = s.next()
-                alg, key = read_host_key(gex_reply.host_key)
-                r['host_keys'][alg] = key
+                key = ssh.parse_key_bytes(gex_reply.host_key)
+                r['host_keys'][key['algorithm']] = key
 
             except EOFError:
                 r['gex']['%d' % gex_size] = 'EOF'
@@ -185,8 +158,8 @@ def scan(addr):
             reply = ssh.SSHKexDhGexReply()
             for k, v in ssh.SSHKexDhGexReply.properties:
                 setattr(reply, k, v.load(io))
-            alg, key = read_host_key(reply.host_key)
-            r['host_keys'][alg] = key
+            key = ssh.parse_key_bytes(reply.host_key)
+            r['host_keys'][key['algorithm']] = key
 
         packet = s.next()
         if isinstance(packet, ssh.SSHNewKeys):

@@ -1,5 +1,6 @@
 import struct
 import random
+import base64
 from io import BytesIO
 
 
@@ -261,6 +262,43 @@ class SSHKexDhGexReply(SSHPacket):
 
 class SSHNewKeys(SSHPacket):
     msg_type = SSHPacket.NEWKEYS
+
+
+def parse_key_ascii(s):
+    b = base64.b64decode(s)
+    return parse_key_bytes(b)
+
+def parse_key_bytes(b):
+    io = BytesIO(b)
+
+    txt = base64.b64encode(b).decode('ascii')
+    alg = SSHPropType.cl_string.load(io).decode('ascii')
+
+    key = {
+        'algorithm': alg,
+        'ascii': txt,
+    }
+
+    if alg == 'ssh-ed25519':
+        key['n'] = SSHPropType.cl_mpint.load(io)
+    elif alg == 'ecdsa-sha2-nistp256':
+        key['name'] = SSHPropType.cl_string.load(io).decode('ascii')
+        key['n'] = SSHPropType.cl_mpint.load(io)
+    elif alg == 'ssh-rsa':
+        key['e'] = SSHPropType.cl_mpint.load(io)
+        key['n'] = SSHPropType.cl_mpint.load(io)
+    elif alg == 'ssh-dss':
+        key['p'] = SSHPropType.cl_mpint.load(io)
+        key['q'] = SSHPropType.cl_mpint.load(io)
+        key['g'] = SSHPropType.cl_mpint.load(io)
+        key['y'] = SSHPropType.cl_mpint.load(io)
+    else:
+        raise ValueError(alg)
+    s = io.read()
+    if s:
+        raise ValueError('extra data: %r' % s)
+    return key
+
 
 def test():
     assert SSHPropType.cl_byte(10) == 10
