@@ -1,6 +1,7 @@
 import struct
 import random
 import base64
+import hashlib
 from io import BytesIO
 
 
@@ -277,6 +278,8 @@ def parse_key_bytes(b):
     key = {
         'algorithm': alg,
         'ascii': txt,
+        'fingerprint': (('%c%c:' * 16) % tuple(
+            hashlib.md5(b).hexdigest()))[:-1],
     }
 
     if alg == 'ssh-ed25519':
