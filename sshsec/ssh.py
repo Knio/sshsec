@@ -284,6 +284,9 @@ def parse_key_bytes(b):
 
     if alg == 'ssh-ed25519':
         key['n'] = SSHPropType.cl_mpint.load(io)
+    elif alg == 'ecdsa-sha2-nistp521':
+        key['name'] = SSHPropType.cl_string.load(io).decode('ascii')
+        key['n'] = SSHPropType.cl_mpint.load(io)
     elif alg == 'ecdsa-sha2-nistp256':
         key['name'] = SSHPropType.cl_string.load(io).decode('ascii')
         key['n'] = SSHPropType.cl_mpint.load(io)
