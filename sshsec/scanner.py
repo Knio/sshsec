@@ -54,7 +54,7 @@ class SSHSocket(object):
     def read_line(self):
         # server will wait at newline
         r = b''
-        while not r.endswith(b'\r\n'):
+        while not r.endswith(b'\n'):
             if len(r) > 1024:
                 raise ValueError
             s = self.read(1)
