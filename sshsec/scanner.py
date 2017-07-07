@@ -107,7 +107,7 @@ def scan(addr):
     # TODO add 768: server should EOF if it's good
     want_gex_size = [768]
     if kex.startswith('diffie-hellman-group-exchange-'):
-        want_gex_size += [1024, 2048, 4096, 8192]
+        want_gex_size += [1024, 2048, 3072, 4096, 6144, 8192]
     want_keys = list(kexinit.server_host_key_algorithms)
 
     def query(gex_size, host_key_alg):
