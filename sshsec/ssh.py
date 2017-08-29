@@ -280,6 +280,8 @@ def parse_key_bytes(b):
         'ascii': txt,
         'fingerprint': (('%c%c:' * 16) % tuple(
             hashlib.md5(b).hexdigest()))[:-1],
+        'fingerprint_new': 'SHA256:{}'.format(
+            base64.b64encode(hashlib.sha256(b).digest()).decode('ascii')),
     }
 
     if alg == 'ssh-ed25519':
